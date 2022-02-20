@@ -1,0 +1,148 @@
+---
+title: "Breve análise do PIB ótica da demanda"
+author: "Ludmila Giuli Pedroso"
+date: "20/02/2022"
+output: html_document
+---
+# Introdução
+
+  A análise de conjuntura envolve não apenas a visualização de dados de um economia em um período de tempo. Compreender o que os dados retratam é tão significativo quanto saber organizá-los e apresentá-los corretamente.
+  Sob tal aspecto, pretende-se abordar de maneira breve uma análise do Produto Interno Bruto (PIB), tomando a ótica da demanda, lançando luz sobre a crise econômica brasileira ter se aprofundado em período anterior a crise sanitária de Covid-19. De modo que o PIB definido pelos componentes da demanda são determinados por: $PIB = Consumo+Governo+FBCF+Exportações-Importações$
+  Para acompanhar tal análise, faz-se uso de três pacotes no R: **sidrar** - que capta via API dados do site [SIDRA IBGE](https://sidra.ibge.gov.br/home/cnt/brasil) - e pacote **seasonal** - que permite dessazonalizar os dados segundo o protocolo X-13 ARIMA-SEATS desenvolvido pelo Census Bureau Norte Americano. Por fim, o pacote **highcharter** que fornece gráficos interativos em HTML, no qual o usuário pode filtrar as séries plotadas, avaliar o valor no ponto do cursor e seu tamanho é ajustado de maneira dinâmica para o tamanho da janela utilizada no navegador.
+
+## Carregando os pacotes
+```{r biblioteca, echo=TRUE, message=FALSE, warning=FALSE}
+library(sidrar)
+library(seasonal)
+library(highcharter)
+```
+## Coletando os dados via API
+  Após o carregamento dos pacotes, no site [SIDRA](https://sidra.ibge.gov.br/home/cnt/brasil) seleciona-se a aba CNT e utiliza-se a tabela 1620, que apresneta a série encadeada do PIB e seus componentes trimestralmente com ano base em 1995.
+  Seleciona-se as opções de **Despesa de consumo das famílias**, **Despesa de consumo da administração pública**, **Formação Bruta do Capital Fixo (FBCF)**, **Exportações de Bens e Serviços** e **Importações de Bens e Serviços**, que somados resultam no **PIB a preços de mercado**, que também deve ser selecionado.
+  Seleciona-se todo o período de trimestres e o nível territorial **Brasil**. Aperta-se o botão **Links de Compartilhar**, no canto inferior direito. Abre-se uma nova janela e seleciona-se o campo **Parâmetros para API** a partir de **/t...**.
+  No R, utiliza-se a função **get_sidra** onde será utilizado o API copiado no site. Renomeamos as colunas para facilitar a organização do data frame. Conforme a seguir:
+  
+```{r sidrar, echo=TRUE, message=FALSE, warning=FALSE}
+tabela <- get_sidra(api = '/t/1620/n1/all/v/all/p/all/c11255/90707,93404,93405,93406,93407,93408/d/v583%202')
+
+series <- c(90707,93404,93405,93406,93407,93408)
+
+names <- c('PIB', 'Consumo', 'Governo', 'FBCF', 'Exportações', 'Importações')
+
+pib <- matrix(NA, ncol=length(series),
+              nrow=nrow(tabela)/length(series))
+
+for(i in 1:length(series)){
+  
+  pib[,i] <- tabela$Valor[tabela$`Setores e subsetores (Código)`
+                          ==series[i]]
+  pib <- ts(pib, start=c(1996,01), freq=4)
+  colnames(pib) <- names
+  
+}
+
+tail(pib)
+```
+  Observa-se que tem-se um data frame com 103 linhas que correspondem a cada trimestre.
+
+## Gráfico sem ajuste
+  Para uma breve visualização de cada componente da demanda do PIB, pode-se plotar um gráfico, conforme a orientação a seguir:
+
+```{r graphic, echo=TRUE, message=FALSE, warning=FALSE}
+plot(pib, main = "Componentes do PIB", xlab = "Tempo")
+```
+Na figura acima foi possível identificar visualmente que a série tem duas características: a) ela está em número índice; b) ela possui carga sazonal;
+
+Em vista disso, iremos tratar a série para sazonalidade e, posteriomente, transformar em taxa de crescimento e acumulá-las a partir de um mesmo ano base. O intuito do segundo exercício é torná-las comparáveis partindo de um ano base escolhido.
+
+Para dessazonalizar, utiliza-se a função **seas()** do pacote **seasonal** na série desejada.
+
+```{r dessazonalizar, echo=TRUE, message=FALSE, warning=FALSE}
+### Dessazonalização do PIB Total
+Seas_pib <- seas(pib[,1])
+
+### Dessazonalização das Rubricas de Demanda
+Seas_con  <- seas(pib[,2])
+Seas_gov  <- seas(pib[,3])
+Seas_fbcf <- seas(pib[,4])
+Seas_exp  <- seas(pib[,5])
+Seas_imp  <- seas(pib[,6])
+```
+## Componentes do PIB dessazonalizados
+Na parte subsequente do bloco, extraí-se a série ajustada (dessazonalizada) e uni-se lado a lado cada série temporal tratada. Daí, transforma-se em taxa de crescimento. Em termos de linguagem R, aparece através do uso da função **cumprod()**. Todavia, o seu uso remove a classe **ts()**. Por essa razão, precisamos declarar novamente como **ts()**:
+```{r junção componentes, echo=TRUE, message=FALSE, warning=FALSE}
+### Junção dos Componentes do PIB
+Pib_Des  <- Seas_pib$data[,3]
+Con_Des  <- Seas_con$data[,3]
+Gov_Des  <- Seas_gov$data[,3]
+FBCF_Des <- Seas_fbcf$data[,3]
+Exp_Des  <- Seas_exp$data[,3]
+Imp_Des  <- Seas_imp$data[,3]
+
+PIB_D <- cbind(Pib_Des,Con_Des,Gov_Des,FBCF_Des,Exp_Des,Imp_Des)
+
+TC_PIB_A  <- (PIB_D/lag(PIB_D,-1)-1)
+
+Pib_ac    <- ts(cumprod(TC_PIB_A[,1]+1)-1, start =c(1996,2), frequency = 4)
+Con_ac    <- ts(cumprod(TC_PIB_A[,2]+1)-1, start =c(1996,2), frequency = 4)
+Gov_ac    <- ts(cumprod(TC_PIB_A[,3]+1)-1, start =c(1996,2), frequency = 4)
+Fbcf_ac   <- ts(cumprod(TC_PIB_A[,4]+1)-1, start =c(1996,2), frequency = 4)
+Exp_ac    <- ts(cumprod(TC_PIB_A[,5]+1)-1, start =c(1996,2), frequency = 4)
+Imp_ac    <- ts(cumprod(TC_PIB_A[,6]+1)-1, start =c(1996,2), frequency = 4)
+```
+## Gráfico do PIB e seus componentes
+
+Por fim, pode-se plotar um gráfico de taxa de crescimento acumulado para facilitar a análise dos componentes do PIB pela ótica da demanda na série dessazonalizada, seguindo o código:
+
+```{r gráfico final}
+hchart(Pib_ac, color = "black", name = "PIB - % Acumulado") %>%
+  hc_add_series(Con_ac, color = "orange", name = "Consumo - % Acumulado") %>%
+  hc_add_series(Gov_ac, color = "purple",  name = "Consumo do Governo - % Acumulado") %>%
+  hc_add_series(Fbcf_ac, color = "magenta",  name = "FBCF - % Acumulado") %>%
+  hc_add_series(Exp_ac-Imp_ac, color = "red",  name = "Exportações Líquidas - % Acumulado") %>%
+  hc_title(text = "Taxa de Crescimento Acumulado dos Componentes da Oferta do PIB", margin = 10,
+           style = list(fontSize= "14px")) %>%
+  hc_subtitle(text = "Dados Trimestrais: 1T1996 a 2T2019") %>%
+  hc_xAxis(plotBands = list(
+    list(
+      label = list(text = "FHC 1"),
+      from = datetime_to_timestamp(as.Date('1996-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('1998-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "FHC 2"),
+      from = datetime_to_timestamp(as.Date('1999-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2002-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Lula 1"),
+      from = datetime_to_timestamp(as.Date('2003-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2006-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Lula 2"),
+      from = datetime_to_timestamp(as.Date('2007-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2010-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Dilma 1"),
+      from = datetime_to_timestamp(as.Date('2011-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2014-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Dilma 2"),
+      from = datetime_to_timestamp(as.Date('2015-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2016-08-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Temer"),
+      from = datetime_to_timestamp(as.Date('2016-09-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2018-12-31', tz = 'UTC'))),
+    list(
+      label = list(text = "Bolsonaro"),
+      from = datetime_to_timestamp(as.Date('2019-01-01', tz = 'UTC')),
+      to = datetime_to_timestamp(as.Date('2021-07-31', tz = 'UTC')))
+  ))
+```
+
+## Considerações
+  O que se observa com a figura do gráfico acima é que as exportações brasileiras líquidas - já subtraindo o valor das importações - tiveram uma queda brusca após o período de *boom de commodities* durante o Governo de Lula 2, um aumento e depois estagnação da FBCF no Governo de Dilma 1 mas não devido a uma melhoria significativa do parque industrial brasileiro. O Consumo das famílias tem uma trajetória muito semelhante a trajetória do PIB, tendo em vista que as políticas de incentivo ao consumo ganham força durante os governos do PT e impactam cerca de 65% do valor total do PIB no país. De maneira que qualquer alteração neste componente, seu efeito multiplicador no PIB é considerável. E o Consumo do Governo manteve-se estagnado desde a mudança de postura política no governo Dilma 2.
+  Logo, o processo de crise econômica brasileira é anterior a crise pandêmica Covid-19. Considerando-se que a balança comercial - exportações menos importações - detém momentos de crise significativo e a pauta exportadora é composta quase na sua totalidade por produtos agropecuários, o consumo não é incorporado de modo sustentado. De maneira que a recuperação da crise agravada pela crise pandêmica tem se tornado mais longa.
+
+## Referência
+
+Este trabalho tem como referência [Análise Qualitativa dos Dados do PIB - Sidra](https://rpubs.com/julio_costa/PIB_SIDRA).
